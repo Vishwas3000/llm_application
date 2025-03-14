@@ -33,7 +33,7 @@
    curl -fsSL https://ollama.ai/install.sh | sh
    ```
 
-2. **Download DeepSeek-R1 from the website**
+2. **Download DeepSeek-R1**
    ```sh
    ollama pull deepseek-r1
    ```
@@ -46,4 +46,26 @@
 4. **Start the LLM server**
    ```sh
    ollama serve
+   ```
+   5. **Install project dependencies**
+   ```sh
+   pip install -r requirements.txt
+   ```
+
+
+## How to Run the Application
+
+1. **Run a test to check Ollama:**
+   ```sh
+   python app.py check-ollama
+   ```
+
+2. **Run the application with sample data:**
+   ```sh
+   python app.py analyze data/sample.csv
+   ```
+
+3. **Test the connection to Ollama:**
+   ```sh
+   python test_ollama_connection.py
    ```
