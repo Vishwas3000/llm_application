@@ -2,9 +2,10 @@ import asyncio
 import logging
 import os
 import typer
+import sys
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Prompt, Confirm
 from rich import print as rprint
 
 from config import OLLAMA_HOST, OLLAMA_MODEL, LOG_LEVEL
@@ -23,13 +24,14 @@ console = Console()
 
 app = typer.Typer()
 
-async def run_agent(file_path: str, question: str = None):
+async def run_agent(file_path: str, question: str = None, use_streaming: bool = True):
     """
     Run the data analysis agent on a CSV file.
     
     Args:
         file_path: Path to the CSV file
         question: Optional initial question to ask
+        use_streaming: Whether to use streaming output
     """
     try:
         # Initialize components
@@ -60,13 +62,22 @@ async def run_agent(file_path: str, question: str = None):
                 
             if user_question.lower() in ('exit', 'quit', 'q'):
                 break
-                
-            # Process question
-            with console.status("[bold yellow]Thinking...[/]", spinner="dots"):
-                response = await agent.process_question(user_question)
             
-            # Display response
-            console.print(Panel(response, title="[bold green]Answer[/]", border_style="green"))
+            # Process question
+            if use_streaming:
+                # Define callback for streaming output
+                def stream_callback(chunk: str):
+                    console.print(chunk, end="")
+                
+                console.print("\n[bold green]Answer:[/]")
+                await agent.process_question_streaming(user_question, stream_callback)
+                console.print("\n")  # Add newline after response
+            else:
+                with console.status("[bold yellow]Thinking...[/]", spinner="dots"):
+                    response = await agent.process_question(user_question)
+                
+                # Display response
+                console.print(Panel(response, title="[bold green]Answer[/]", border_style="green"))
             
     except Exception as e:
         logger.exception("Error running agent")
@@ -75,7 +86,8 @@ async def run_agent(file_path: str, question: str = None):
 @app.command()
 def analyze(
     csv_file: str = typer.Argument(..., help="Path to the CSV file to analyze"),
-    question: str = typer.Option(None, "--question", "-q", help="Initial question to ask")
+    question: str = typer.Option(None, "--question", "-q", help="Initial question to ask"),
+    streaming: bool = typer.Option(True, "--streaming/--no-streaming", help="Use streaming output")
 ):
     """
     Analyze a CSV file using the data analysis agent.
@@ -91,7 +103,7 @@ def analyze(
         border_style="blue"
     ))
     
-    asyncio.run(run_agent(csv_file, question))
+    asyncio.run(run_agent(csv_file, question, streaming))
 
 @app.command()
 def check_ollama():
@@ -110,6 +122,30 @@ def check_ollama():
                 console.print("You can install the model with: [bold]ollama pull deepseek-r1[/]")
     
     asyncio.run(_check())
+
+@app.command()
+def test_streaming():
+    """
+    Test streaming output with Ollama.
+    """
+    async def _test_streaming():
+        console.print("[bold blue]Testing streaming output with Ollama...[/]")
+        
+        llm = LLMInterface(model_name=OLLAMA_MODEL, host=OLLAMA_HOST)
+        
+        def callback(chunk: str):
+            console.print(chunk, end="")
+        
+        prompt = "Write a short paragraph about data analysis. Make it informative but concise."
+        
+        try:
+            console.print("[bold green]Response:[/]\n")
+            await llm.generate_streaming(prompt, callback)
+            console.print("\n\n[bold green]Streaming test completed![/]")
+        except Exception as e:
+            console.print(f"\n[bold red]Error during streaming test:[/] {str(e)}")
+    
+    asyncio.run(_test_streaming())
 
 if __name__ == "__main__":
     app()

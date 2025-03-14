@@ -1,6 +1,7 @@
 import json
 import httpx
-from typing import Dict, Any, List, Optional
+import asyncio
+from typing import Dict, Any, List, Optional, AsyncGenerator, Callable
 import logging
 
 logger = logging.getLogger(__name__)
@@ -12,6 +13,7 @@ class LLMInterface:
         self.model_name = model_name
         self.host = host
         self.api_url = f"{host}/api/generate"
+        self.stream_url = f"{host}/api/generate"  # Same URL for Ollama, but with stream=true
         logger.info(f"Initialized LLM interface with model: {model_name}")
         
     async def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2048) -> str:
@@ -35,7 +37,7 @@ class LLMInterface:
         }
         
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:  # Increased timeout
+            async with httpx.AsyncClient(timeout=100.0) as client:  # Increased timeout
                 response = await client.post(self.api_url, json=payload)
                 if response.status_code == 200:
                     result = response.json()
@@ -53,6 +55,76 @@ class LLMInterface:
         except Exception as e:
             logger.error(f"Error generating LLM response: {str(e)}")
             return f"Error: {str(e)}"
+    
+    async def generate_streaming(self, prompt: str, callback: Callable[[str], None], 
+                                temperature: float = 0.7, 
+                                max_tokens: int = 2048) -> str:
+        """
+        Generate a streaming response from the LLM.
+        
+        Args:
+            prompt: The input prompt to send to the LLM
+            callback: Function to call with each chunk of the response
+            temperature: Controls randomness (higher = more random)
+            max_tokens: Maximum number of tokens to generate
+            
+        Returns:
+            The complete LLM response as a string
+        """
+        logger.debug(f"Sending streaming prompt to LLM: {prompt[:100]}...")
+        
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": True  # Enable streaming
+        }
+        
+        full_response = ""
+        
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:  # Longer timeout for streaming
+                async with client.stream("POST", self.stream_url, json=payload) as response:
+                    if response.status_code != 200:
+                        error_msg = f"Ollama API returned status code {response.status_code}"
+                        logger.error(error_msg)
+                        callback(f"Error: {error_msg}")
+                        return f"Error: {error_msg}"
+                    
+                    async for chunk in response.aiter_lines():
+                        if not chunk:
+                            continue
+                        
+                        try:
+                            chunk_data = json.loads(chunk)
+                            if "response" in chunk_data:
+                                text_chunk = chunk_data["response"]
+                                full_response += text_chunk
+                                callback(text_chunk)
+                            
+                            # Check if we've reached the end
+                            if chunk_data.get("done", False):
+                                break
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to parse streaming chunk: {chunk}")
+                            continue
+            
+            return full_response
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error occurred during streaming: {e}")
+            error_msg = f"Error: LLM request failed with status code {e.response.status_code}"
+            callback(error_msg)
+            return error_msg
+        except httpx.ReadTimeout:
+            logger.error("Streaming request to Ollama timed out")
+            error_msg = "Error: Request to Ollama timed out. The model might be still loading or the server is busy."
+            callback(error_msg)
+            return error_msg
+        except Exception as e:
+            logger.error(f"Error generating streaming LLM response: {str(e)}")
+            error_msg = f"Error: {str(e)}"
+            callback(error_msg)
+            return error_msg
     
     async def parse_tool_call(self, response: str) -> Dict[str, Any]:
         """

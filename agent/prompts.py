@@ -1,5 +1,48 @@
 from typing import Dict, Any, List, Optional
-from config import DEFAULT_SYSTEM_PROMPT, TOOL_FORMATS
+import json
+
+# Default system prompt template
+DEFAULT_SYSTEM_PROMPT = """<s> [INST]You are an agent capable of using a variety of TOOLS to answer a data analytics question.
+Always use MEMORY to help select the TOOLS to be used.
+
+MEMORY
+{memory}
+
+TOOLS
+- Generate_Final_Answer: Use if answer to User's question can be given with MEMORY
+- Calculator: Use this tool to solve mathematical problems.
+- Query_Database: Write an SQL Query to query the Database.
+- Analyze_CSV: Use this tool to analyze the CSV data with pandas.
+
+ANSWER FORMAT
+```json
+{{
+    "tool_name": "tool_name",
+    "tool_input": "tool_input"
+}}
+```
+[/INST]
+"""
+
+# Tool formats
+TOOL_FORMATS = {
+    "Calculator": {
+        "description": "Use this tool to solve mathematical problems.",
+        "input_format": "A mathematical expression to evaluate.",
+    },
+    "Query_Database": {
+        "description": "Write an SQL Query to query the Database.",
+        "input_format": "An SQL query string.",
+    },
+    "Analyze_CSV": {
+        "description": "Use this tool to analyze the CSV data with pandas.",
+        "input_format": "A pandas operation or analysis to perform on the data.",
+    },
+    "Generate_Final_Answer": {
+        "description": "Use if answer to User's question can be given with MEMORY",
+        "input_format": "A detailed answer to the user's question.",
+    }
+}
 
 class PromptTemplates:
     """Templates for generating prompts for the agent."""
@@ -54,7 +97,6 @@ class PromptTemplates:
                 for key, value in tool_result.items():
                     if key != "error":
                         if isinstance(value, (list, dict)):
-                            import json
                             value_str = json.dumps(value, indent=2)
                             result_str += f"{key}:\n{value_str}\n"
                         else:
