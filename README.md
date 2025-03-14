@@ -60,9 +60,9 @@
    python app.py check-ollama
    ```
 
-2. **Run the application with sample data:**
+2. **Run the application with sample data (analize on small data):**
    ```sh
-   python app.py analyze data/sample.csv
+   python app.py analyze data/sample_small.csv
    ```
 
 3. **Test the connection to Ollama:**

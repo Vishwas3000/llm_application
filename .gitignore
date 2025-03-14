@@ -40,4 +40,5 @@ Thumbs.db
 # Project specific
 data/*.csv
 !data/sample.csv
+!data/sample_small.csv
 logs/
