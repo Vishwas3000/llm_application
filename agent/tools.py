@@ -2,6 +2,9 @@ from typing import Dict, Any, List, Optional, Tuple, Callable
 import logging
 from utils.helpers import calculator
 from utils.csv_loader import CSVLoader
+from utils.mongo_utils import MongoDBClient
+import pandas as pd
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +15,7 @@ class ToolRegistry:
         """Initialize the tool registry."""
         self.tools: Dict[str, Callable] = {}
         self.csv_loader: Optional[CSVLoader] = None
+        self.mongo_client: Optional[MongoDBClient] = None
         logger.info("Initialized tool registry")
     
     def register_tool(self, name: str, func: Callable) -> None:
@@ -34,6 +38,16 @@ class ToolRegistry:
         """
         self.csv_loader = csv_loader
         logger.info("Set CSV loader in tool registry")
+    
+    def set_mongo_client(self, mongo_client: MongoDBClient) -> None:
+        """
+        Set the MongoDB client for use by tools.
+        
+        Args:
+            mongo_client: The MongoDB client instance
+        """
+        self.mongo_client = mongo_client
+        logger.info("Set MongoDB client in tool registry")
     
     async def execute_tool(self, tool_name: str, tool_input: str) -> Tuple[Any, str]:
         """
@@ -207,5 +221,141 @@ def create_standard_tools() -> ToolRegistry:
         }
     
     registry.register_tool("Generate_Final_Answer", generate_final_answer)
+    
+    # Visualization Data Formatter tool
+    def format_visualization_data(operation: str) -> Dict[str, Any]:
+        if not registry.csv_loader or registry.csv_loader.df is None:
+            return {
+                "error": "No CSV data loaded"
+            }
+        
+        try:
+            # Execute the pandas operation to get the data
+            result, description = registry.csv_loader.execute_pandas_operation(operation)
+            
+            # Format the data for visualization
+            if isinstance(result, pd.Series):
+                # For bar/pie charts with single series
+                formatted_data = {
+                    "labels": result.index.tolist(),
+                    "values": result.values.tolist(),
+                    "type": "single_series",
+                    "description": description
+                }
+            elif isinstance(result, pd.DataFrame):
+                # For multi-series charts
+                formatted_data = {
+                    "labels": result.index.tolist(),
+                    "series": {
+                        col: result[col].tolist() 
+                        for col in result.columns
+                    },
+                    "type": "multi_series",
+                    "description": description
+                }
+            else:
+                formatted_data = {
+                    "raw_data": str(result),
+                    "type": "raw",
+                    "description": description
+                }
+            
+            return {
+                "operation": operation,
+                "visualization_data": formatted_data,
+                "description": description
+            }
+            
+        except Exception as e:
+            logger.error(f"Error formatting visualization data: {str(e)}")
+            return {"error": f"Error formatting visualization data: {str(e)}"}
+    
+    registry.register_tool("Format_Visualization", format_visualization_data)
+    
+    # MongoDB Query tool
+    def mongo_query_tool(query_str: str) -> Dict[str, Any]:
+        if not registry.mongo_client:
+            return {
+                "error": "MongoDB client not initialized"
+            }
+        
+        try:
+            # Parse the query string which should be a JSON string containing:
+            # {
+            #   "operation": "find|find_one|insert_one|update_one|delete_one|count",
+            #   "query": {...},  # MongoDB query document
+            #   "update": {...},  # For update operations
+            #   "document": {...}  # For insert operations
+            # }
+            query_data = json.loads(query_str)
+            operation = query_data.get("operation")
+            
+            if operation == "find":
+                query = query_data.get("query", {})
+                limit = query_data.get("limit", 50)
+                result = registry.mongo_client.find(query, limit)
+                return {
+                    "operation": "find",
+                    "result": result,
+                    "count": len(result)
+                }
+            
+            elif operation == "find_one":
+                query = query_data.get("query", {})
+                result = registry.mongo_client.find_one(query)
+                return {
+                    "operation": "find_one",
+                    "result": result
+                }
+            
+            elif operation == "insert_one":
+                document = query_data.get("document")
+                if not document:
+                    return {"error": "No document provided for insert"}
+                result = registry.mongo_client.insert_one(document)
+                return {
+                    "operation": "insert_one",
+                    "inserted_id": result
+                }
+            
+            elif operation == "update_one":
+                query = query_data.get("query")
+                update = query_data.get("update")
+                if not query or not update:
+                    return {"error": "Query and update documents required"}
+                result = registry.mongo_client.update_one(query, update)
+                return {
+                    "operation": "update_one",
+                    "modified_count": result
+                }
+            
+            elif operation == "delete_one":
+                query = query_data.get("query")
+                if not query:
+                    return {"error": "Query document required"}
+                result = registry.mongo_client.delete_one(query)
+                return {
+                    "operation": "delete_one",
+                    "deleted_count": result
+                }
+            
+            elif operation == "count":
+                query = query_data.get("query", {})
+                result = registry.mongo_client.count_documents(query)
+                return {
+                    "operation": "count",
+                    "count": result
+                }
+            
+            else:
+                return {"error": f"Unsupported operation: {operation}"}
+                
+        except json.JSONDecodeError:
+            return {"error": "Invalid JSON query string"}
+        except Exception as e:
+            logger.error(f"Error executing MongoDB query: {str(e)}")
+            return {"error": f"Error executing query: {str(e)}"}
+    
+    registry.register_tool("MongoDB_Query", mongo_query_tool)
     
     return registry
